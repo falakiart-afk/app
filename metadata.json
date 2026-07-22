@@ -1,0 +1,8 @@
+{
+  "name": "CASArt COD Suite",
+  "description": "Premium E-Commerce COD (Cash on Delivery) order management hub and administration control panel for CASArt, with local storage tracking, Google Sheets sync, WooCommerce integration, and automated invoice PDF generation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

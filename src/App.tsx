@@ -69,6 +69,18 @@ export default function App() {
     setOrders(updatedOrders);
   };
 
+  // Update entire order details handler
+  const handleUpdateOrder = (updatedOrder: Order) => {
+    const nextOrders = orders.map(o => o.id === updatedOrder.id ? updatedOrder : o);
+    saveOrders(nextOrders);
+  };
+
+  // Add new order handler
+  const handleAddOrder = (newOrder: Order) => {
+    const nextOrders = [newOrder, ...orders];
+    saveOrders(nextOrders);
+  };
+
   // Update order status handler
   const handleStatusChange = (id: string, status: Order['status']) => {
     const nextOrders = orders.map(o => o.id === id ? { ...o, status } : o);
@@ -106,6 +118,8 @@ export default function App() {
         <AdminPanel 
           orders={orders}
           onStatusChange={handleStatusChange}
+          onUpdateOrder={handleUpdateOrder}
+          onAddOrder={handleAddOrder}
           onDeleteOrder={handleDeleteOrder}
           onResetDemo={handleResetDemo}
           onLogout={handleLogout}

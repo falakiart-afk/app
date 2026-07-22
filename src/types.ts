@@ -8,6 +8,8 @@ export interface Order {
   totalPrice: number;
   status: 'pending' | 'confirmed' | 'shipped' | 'delivered' | 'cancelled';
   createdAt: string;
+  notes?: string;
+  productName?: string;
 }
 
 export interface City {

@@ -43,17 +43,23 @@ async function startServer() {
     }
   });
 
-  // WooCommerce proxy endpoint for updating an order status
+  // WooCommerce proxy endpoint for updating an order (status, billing, shipping, total)
   app.put("/api/woocommerce/orders/update", async (req, res) => {
     try {
-      const { url, consumerKey, consumerSecret, orderId, status } = req.body;
-      if (!url || !consumerKey || !consumerSecret || !orderId || !status) {
+      const { url, consumerKey, consumerSecret, orderId, status, billing, shipping, total } = req.body;
+      if (!url || !consumerKey || !consumerSecret || !orderId) {
         return res.status(400).json({ error: "Missing required update fields" });
       }
 
       const cleanUrl = url.replace(/\/$/, "");
       const wcUrl = `${cleanUrl}/wp-json/wc/v3/orders/${orderId}`;
       const authHeader = "Basic " + Buffer.from(`${consumerKey}:${consumerSecret}`).toString("base64");
+
+      const updatePayload: Record<string, any> = {};
+      if (status) updatePayload.status = status;
+      if (billing) updatePayload.billing = billing;
+      if (shipping) updatePayload.shipping = shipping;
+      if (total) updatePayload.total = total;
 
       const response = await fetch(wcUrl, {
         method: "PUT",
@@ -62,7 +68,7 @@ async function startServer() {
           "Content-Type": "application/json",
           "Accept": "application/json",
         },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify(updatePayload),
       });
 
       if (!response.ok) {

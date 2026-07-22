@@ -31,7 +31,13 @@ import {
   HelpCircle,
   Printer,
   Paintbrush,
-  ArrowLeft
+  ArrowLeft,
+  Edit3,
+  Save,
+  FileText,
+  Lock,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { Order, City } from '../types';
 import { CITIES } from '../data';
@@ -57,12 +63,16 @@ interface WooSite {
 export default function AdminPanel({
   orders: demoOrders,
   onStatusChange,
+  onUpdateOrder,
+  onAddOrder,
   onDeleteOrder,
   onResetDemo,
   onLogout
 }: {
   orders: Order[];
   onStatusChange: (id: string, status: Order['status']) => void;
+  onUpdateOrder?: (order: Order) => void;
+  onAddOrder?: (order: Order) => void;
   onDeleteOrder: (id: string) => void;
   onResetDemo: () => void;
   onLogout?: () => void;
@@ -326,8 +336,32 @@ export default function AdminPanel({
   const [tikiPrice, setTikiPrice] = useState('');
   const [tikiQrData, setTikiQrData] = useState('');
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [currentTikiOrder, setCurrentTikiOrder] = useState<{ order: any; isWoo: boolean } | null>(null);
+
+  // Order Edit & Create Modal State
+  const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
+  const [modalMode, setModalMode] = useState<'create' | 'edit'>('edit');
+  const [editingOrder, setEditingOrder] = useState<any | null>(null);
+  const [isEditingWooOrder, setIsEditingWooOrder] = useState(false);
+
+  // Order Form fields
+  const [orderFormName, setOrderFormName] = useState('');
+  const [orderFormPhone, setOrderFormPhone] = useState('');
+  const [orderFormCity, setOrderFormCity] = useState('casablanca');
+  const [orderFormAddress, setOrderFormAddress] = useState('');
+  const [orderFormProduct, setOrderFormProduct] = useState('');
+  const [orderFormQuantity, setOrderFormQuantity] = useState(1);
+  const [orderFormPrice, setOrderFormPrice] = useState(249);
+  const [orderFormStatus, setOrderFormStatus] = useState<any>('pending');
+  const [orderFormNotes, setOrderFormNotes] = useState('');
+  const [isSavingOrder, setIsSavingOrder] = useState(false);
+  const [orderSaveSuccess, setOrderSaveSuccess] = useState(false);
+
+  // Edit WooCommerce Site State
+  const [editingSiteId, setEditingSiteId] = useState<string | null>(null);
 
   const handleOpenTikiModal = (order: any, isWoo: boolean) => {
+    setCurrentTikiOrder({ order, isWoo });
     let name = '';
     let phone = '';
     let city = '';
@@ -394,6 +428,216 @@ export default function AdminPanel({
     localStorage.setItem('tiki_qr_type', tikiQrType);
     localStorage.setItem('tiki_qr_image', tikiQrImage);
     alert('Defaults saved! This store details will be loaded automatically next time.');
+  };
+
+  // Save Tiki label modifications directly back to the order details
+  const handleSyncTikiToOrder = async () => {
+    if (!currentTikiOrder) return;
+    const { order, isWoo } = currentTikiOrder;
+
+    if (isWoo) {
+      try {
+        await requestWoo('update_order', {
+          url: wooSettings.url,
+          consumerKey: wooSettings.consumerKey,
+          consumerSecret: wooSettings.consumerSecret,
+          orderId: order.id.toString(),
+          billing: {
+            first_name: tikiDestinataire,
+            phone: tikiPhone,
+            address_1: tikiAdresse,
+            city: tikiVille
+          },
+          shipping: {
+            first_name: tikiDestinataire,
+            phone: tikiPhone,
+            address_1: tikiAdresse,
+            city: tikiVille
+          },
+          total: tikiPrice
+        });
+        setWooOrders(prev => prev.map(o => o.id === order.id ? {
+          ...o,
+          billing: { ...o.billing, first_name: tikiDestinataire, phone: tikiPhone, address_1: tikiAdresse, city: tikiVille },
+          shipping: { ...o.shipping, first_name: tikiDestinataire, phone: tikiPhone, address_1: tikiAdresse, city: tikiVille },
+          total: tikiPrice
+        } : o));
+        alert('✓ تم حفظ وتحديث معلومات الطلب في موقع ووكومرس بنجاح!');
+      } catch (err: any) {
+        alert('خطأ أثناء حفظ التعديلات في ووكومرس: ' + (err.message || err));
+      }
+    } else {
+      if (onUpdateOrder) {
+        const numPrice = parseFloat(tikiPrice) || order.totalPrice;
+        onUpdateOrder({
+          ...order,
+          name: tikiDestinataire,
+          phone: tikiPhone,
+          city: tikiVille,
+          address: tikiAdresse,
+          totalPrice: numPrice
+        });
+        alert('✓ تم حفظ وتحديث معلومات الطلب بنجاح!');
+      }
+    }
+  };
+
+  // Open Add Order Modal
+  const handleOpenAddOrderModal = () => {
+    setModalMode('create');
+    setEditingOrder(null);
+    setIsEditingWooOrder(false);
+    setOrderFormName('');
+    setOrderFormPhone('');
+    setOrderFormCity('casablanca');
+    setOrderFormAddress('');
+    setOrderFormProduct('');
+    setOrderFormQuantity(1);
+    setOrderFormPrice(249);
+    setOrderFormStatus('pending');
+    setOrderFormNotes('');
+    setOrderSaveSuccess(false);
+    setIsOrderModalOpen(true);
+  };
+
+  // Open Edit Order Modal
+  const handleOpenEditOrderModal = (order: any, isWoo: boolean) => {
+    setModalMode('edit');
+    setEditingOrder(order);
+    setIsEditingWooOrder(isWoo);
+    setOrderSaveSuccess(false);
+
+    if (isWoo) {
+      const billing = order.billing || {};
+      const shipping = order.shipping || {};
+      const name = `${shipping.first_name || billing.first_name || ''} ${shipping.last_name || billing.last_name || ''}`.trim();
+      const phone = billing.phone || shipping.phone || '';
+      const city = shipping.city || billing.city || '';
+      const address = `${shipping.address_1 || ''} ${shipping.address_2 || ''} ${billing.address_1 || ''}`.trim();
+      const productsText = (order.line_items || []).map((item: any) => `${item.name} (${item.quantity}x)`).join(', ');
+
+      setOrderFormName(name);
+      setOrderFormPhone(phone);
+      setOrderFormCity(city || 'casablanca');
+      setOrderFormAddress(address);
+      setOrderFormProduct(productsText);
+      setOrderFormQuantity(1);
+      setOrderFormPrice(parseFloat(order.total) || 0);
+      setOrderFormStatus(order.status);
+      setOrderFormNotes(order.customer_note || '');
+    } else {
+      setOrderFormName(order.name || '');
+      setOrderFormPhone(order.phone || '');
+      setOrderFormCity(order.city || 'casablanca');
+      setOrderFormAddress(order.address || '');
+      setOrderFormProduct(order.productName || '');
+      setOrderFormQuantity(order.quantity || 1);
+      setOrderFormPrice(order.totalPrice || 0);
+      setOrderFormStatus(order.status || 'pending');
+      setOrderFormNotes(order.notes || '');
+    }
+
+    setIsOrderModalOpen(true);
+  };
+
+  // Save Order Form Submission
+  const handleSaveOrderSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingOrder(true);
+    setOrderSaveSuccess(false);
+
+    try {
+      if (modalMode === 'create') {
+        const newId = `CAS-${Math.floor(100 + Math.random() * 900)}-MA`;
+        const newOrder: Order = {
+          id: newId,
+          name: orderFormName.trim(),
+          phone: orderFormPhone.trim(),
+          city: orderFormCity,
+          address: orderFormAddress.trim(),
+          quantity: Number(orderFormQuantity) || 1,
+          totalPrice: Number(orderFormPrice) || 0,
+          status: orderFormStatus as Order['status'],
+          createdAt: new Date().toISOString(),
+          productName: orderFormProduct.trim(),
+          notes: orderFormNotes.trim()
+        };
+
+        if (onAddOrder) {
+          onAddOrder(newOrder);
+        }
+        setOrderSaveSuccess(true);
+        setTimeout(() => {
+          setIsOrderModalOpen(false);
+          setOrderSaveSuccess(false);
+        }, 1200);
+      } else if (modalMode === 'edit') {
+        if (isEditingWooOrder && editingOrder) {
+          await requestWoo('update_order', {
+            url: wooSettings.url,
+            consumerKey: wooSettings.consumerKey,
+            consumerSecret: wooSettings.consumerSecret,
+            orderId: editingOrder.id.toString(),
+            status: orderFormStatus,
+            billing: {
+              first_name: orderFormName,
+              phone: orderFormPhone,
+              address_1: orderFormAddress,
+              city: orderFormCity
+            },
+            shipping: {
+              first_name: orderFormName,
+              phone: orderFormPhone,
+              address_1: orderFormAddress,
+              city: orderFormCity
+            },
+            total: orderFormPrice.toString()
+          });
+
+          setWooOrders(prev => prev.map(o => o.id === editingOrder.id ? {
+            ...o,
+            status: orderFormStatus,
+            billing: { ...o.billing, first_name: orderFormName, phone: orderFormPhone, address_1: orderFormAddress, city: orderFormCity },
+            shipping: { ...o.shipping, first_name: orderFormName, phone: orderFormPhone, address_1: orderFormAddress, city: orderFormCity },
+            total: orderFormPrice.toString()
+          } : o));
+
+          setOrderSaveSuccess(true);
+          setTimeout(() => {
+            setIsOrderModalOpen(false);
+            setOrderSaveSuccess(false);
+          }, 1200);
+        } else if (editingOrder) {
+          const updated: Order = {
+            ...editingOrder,
+            name: orderFormName.trim(),
+            phone: orderFormPhone.trim(),
+            city: orderFormCity,
+            address: orderFormAddress.trim(),
+            quantity: Number(orderFormQuantity) || 1,
+            totalPrice: Number(orderFormPrice) || 0,
+            status: orderFormStatus as Order['status'],
+            productName: orderFormProduct.trim(),
+            notes: orderFormNotes.trim()
+          };
+
+          if (onUpdateOrder) {
+            onUpdateOrder(updated);
+          }
+
+          setOrderSaveSuccess(true);
+          setTimeout(() => {
+            setIsOrderModalOpen(false);
+            setOrderSaveSuccess(false);
+          }, 1200);
+        }
+      }
+    } catch (err: any) {
+      console.error('Error saving order:', err);
+      alert('حدث خطأ أثناء حفظ الطلب: ' + (err.message || err));
+    } finally {
+      setIsSavingOrder(false);
+    }
   };
 
   const handlePrintTiki = () => {
@@ -715,8 +959,30 @@ export default function AdminPanel({
   const [syncSuccess, setSyncSuccess] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
 
+  // Admin Credentials State
+  const [adminUsername, setAdminUsername] = useState(() => localStorage.getItem('cpanel_username') || 'admin');
+  const [adminPassword, setAdminPassword] = useState(() => localStorage.getItem('cpanel_password') || 'admin123');
+  const [newAdminUsername, setNewAdminUsername] = useState(adminUsername);
+  const [newAdminPassword, setNewAdminPassword] = useState(adminPassword);
+  const [showAdminPassword, setShowAdminPassword] = useState(false);
+  const [adminCredsSuccess, setAdminCredsSuccess] = useState(false);
+
+  const handleSaveAdminCredentials = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAdminUsername.trim() || newAdminPassword.length < 4) {
+      alert('اسم المستخدم أو كلمة المرور قصيرة جداً (على الأقل 4 أحرف)');
+      return;
+    }
+    localStorage.setItem('cpanel_username', newAdminUsername.trim());
+    localStorage.setItem('cpanel_password', newAdminPassword);
+    setAdminUsername(newAdminUsername.trim());
+    setAdminPassword(newAdminPassword);
+    setAdminCredsSuccess(true);
+    setTimeout(() => setAdminCredsSuccess(false), 2500);
+  };
+
   // UI state
-  const [activeTab, setActiveTab] = useState<'orders' | 'integrations'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders' | 'integrations' | 'security'>('orders');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [sourceFilter, setSourceFilter] = useState<'woo' | 'sandbox'>('sandbox');
@@ -864,11 +1130,14 @@ export default function AdminPanel({
       consumerSecret: string;
       orderId?: string | number;
       status?: string;
+      billing?: any;
+      shipping?: any;
+      total?: string;
       page?: number;
       perPage?: number;
     }
   ) => {
-    const { url, consumerKey, consumerSecret, orderId, status, page = 1, perPage = 100 } = params;
+    const { url, consumerKey, consumerSecret, orderId, status, billing, shipping, total, page = 1, perPage = 100 } = params;
     const cleanUrl = url.replace(/\/$/, "");
 
     // 1. Try our proxy API endpoint first
@@ -877,7 +1146,7 @@ export default function AdminPanel({
       const proxyMethod = action === 'get_orders' ? 'POST' : 'PUT';
       const proxyBody = action === 'get_orders' 
         ? { url, consumerKey, consumerSecret, status, page, perPage }
-        : { url, consumerKey, consumerSecret, orderId, status };
+        : { url, consumerKey, consumerSecret, orderId, status, billing, shipping, total };
 
       const response = await fetch(proxyEndpoint, {
         method: proxyMethod,
@@ -1344,18 +1613,8 @@ export default function AdminPanel({
         
         {/* Header Tabs Navigation */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 border-b border-gray-800 pb-5">
-          <div>
-            <div className="flex items-center gap-2.5 mb-2">
-              <span className="bg-blue-950/40 border border-blue-500/30 text-blue-400 text-[10px] font-bold px-2.5 py-0.5 rounded-sm uppercase tracking-widest">
-                Ecommerce Suite
-              </span>
-              <span className="text-xs text-gray-500 font-mono">WooCommerce & Google Sheets Connected</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <BrandLogo isDarkTheme={true} className="text-2xl sm:text-3xl" />
-              <div className="h-6 w-[1px] bg-gray-850 hidden sm:block"></div>
-              <span className="text-xs font-semibold text-blue-400 tracking-wider uppercase hidden sm:inline">{storeTagline}</span>
-            </div>
+          <div className="flex items-center">
+            <BrandLogo isDarkTheme={true} className="text-2xl sm:text-3xl" />
           </div>
 
           <div className="flex flex-wrap items-center gap-2 bg-[#16181e] p-1 border border-gray-800 rounded-sm">
@@ -1375,6 +1634,19 @@ export default function AdminPanel({
             >
               <Settings className="h-3.5 w-3.5" />
               <span>Setup Connections</span>
+            </button>
+            <button
+              onClick={() => {
+                setNewAdminUsername(adminUsername);
+                setNewAdminPassword(adminPassword);
+                setActiveTab('security');
+              }}
+              className={`px-4 py-2 text-xs font-bold uppercase tracking-widest rounded-sm transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'security' ? 'bg-blue-500 text-black' : 'hover:text-white text-gray-400'
+              }`}
+            >
+              <ShieldCheck className="h-3.5 w-3.5" />
+              <span>حساب الأدمن / Password</span>
             </button>
             {onLogout && (
               <button
@@ -2065,6 +2337,99 @@ export default function AdminPanel({
               </form>
             </div>
           </div>
+        ) : activeTab === 'security' ? (
+          /* ADMIN SECURITY & CREDENTIALS MANAGEMENT */
+          <div className="max-w-2xl mx-auto mb-8">
+            <div className="bg-[#1A1C23] border border-gray-800 rounded-lg p-6 space-y-6 shadow-xl">
+              <div>
+                <h2 className="text-lg font-bold text-white mb-2 flex items-center gap-2 border-b border-gray-800 pb-3">
+                  <ShieldCheck className="h-5 w-5 text-blue-400" />
+                  <span>تغيير اسم المستخدم وكلمة المرور / Identifiants Admin</span>
+                </h2>
+                <p className="text-xs text-gray-400">
+                  قم بتخصيص معلومات تسجيل الدخول الخاصة بك للمدير لضمان حماية اللوحة وأمان البيانات.
+                </p>
+              </div>
+
+              <form onSubmit={handleSaveAdminCredentials} className="space-y-5">
+                {adminCredsSuccess && (
+                  <div className="p-3 bg-emerald-950/30 border border-emerald-500/30 rounded-lg text-emerald-400 text-xs flex items-center gap-2 font-bold animate-fadeIn">
+                    <CheckCircle className="h-4 w-4 shrink-0 text-emerald-400" />
+                    <span>✓ تم حفظ اسم المستخدم وكلمة المرور بنجاح! / Modifié avec succès!</span>
+                  </div>
+                )}
+
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-gray-300">
+                    اسم المستخدم الحالي / Current Username
+                  </label>
+                  <div className="px-3 py-2 bg-[#0D0E11] border border-gray-800 rounded-lg text-xs font-mono text-blue-400 font-bold">
+                    {adminUsername}
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-gray-300">
+                    اسم المستخدم الجديد / New Admin Username
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-500">
+                      <User className="h-4 w-4" />
+                    </div>
+                    <input
+                      type="text"
+                      value={newAdminUsername}
+                      onChange={(e) => setNewAdminUsername(e.target.value)}
+                      placeholder="e.g. admin"
+                      required
+                      className="w-full bg-[#0D0E11] border border-gray-800 focus:border-blue-500 focus:ring-0 rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-gray-600 transition-colors focus:outline-hidden"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-gray-300">
+                    كلمة المرور الجديدة / New Admin Password
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-500">
+                      <Lock className="h-4 w-4" />
+                    </div>
+                    <input
+                      type={showAdminPassword ? 'text' : 'password'}
+                      value={newAdminPassword}
+                      onChange={(e) => setNewAdminPassword(e.target.value)}
+                      placeholder="••••••••"
+                      required
+                      minLength={4}
+                      className="w-full bg-[#0D0E11] border border-gray-800 focus:border-blue-500 focus:ring-0 rounded-lg pl-9 pr-10 py-2 text-sm text-white placeholder-gray-600 transition-colors focus:outline-hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowAdminPassword(!showAdminPassword)}
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-500 hover:text-gray-300 cursor-pointer"
+                      title={showAdminPassword ? 'Hide password' : 'Show password'}
+                    >
+                      {showAdminPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-gray-500 mt-1">
+                    يجب أن تتكون كلمة المرور من 4 أحرف على الأقل.
+                  </p>
+                </div>
+
+                <div className="pt-2 flex items-center gap-3">
+                  <button
+                    type="submit"
+                    className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs uppercase tracking-widest rounded-lg cursor-pointer transition-all flex items-center justify-center gap-2 shadow-lg shadow-blue-900/20 active:scale-[0.98]"
+                  >
+                    <Save className="h-4 w-4" />
+                    <span>حفظ التغييرات / Save Changes</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
         ) : (
           /* CORE ORDER MANAGER */
           <>
@@ -2180,6 +2545,15 @@ export default function AdminPanel({
                       )}
                     </select>
                   </div>
+
+                  {/* Add New Order Button */}
+                  <button
+                    onClick={handleOpenAddOrderModal}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-extrabold uppercase tracking-widest rounded-sm transition-all cursor-pointer shadow-md"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    <span>إضافة طلب / Add Order</span>
+                  </button>
 
                   {/* CSV Export for non-connected / Backup */}
                   {!isWooActive && (
@@ -2405,13 +2779,22 @@ export default function AdminPanel({
                                   <span className="text-gray-600 font-mono">-</span>
                                 )}
                                 
+                                 <button
+                                  onClick={() => handleOpenEditOrderModal(order, isWooActive)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-amber-950/40 hover:bg-amber-900/40 border border-amber-500/30 text-amber-300 hover:text-amber-200 text-xs font-bold rounded-sm transition-all cursor-pointer"
+                                  title="Edit Order Details / تعديل الطلب"
+                                >
+                                  <Edit3 className="h-3.5 w-3.5 shrink-0" />
+                                  <span>تعديل / Edit</span>
+                                </button>
+
                                 <button
                                   onClick={() => handleOpenTikiModal(order, isWooActive)}
                                   className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-950/40 hover:bg-blue-900/40 border border-blue-500/30 text-blue-400 hover:text-blue-300 text-xs font-bold rounded-sm transition-all cursor-pointer"
                                   title="Print Shipping Label / Tiki"
                                 >
                                   <Printer className="h-3.5 w-3.5 shrink-0 text-blue-400" />
-                                  <span>Tiki / تيكي</span>
+                                  <span>Tiki</span>
                                 </button>
 
                                 <button
@@ -2431,9 +2814,19 @@ export default function AdminPanel({
                                   <span>
                                     {dispatchedOrders[isWooActive ? `WOO-${order.id}` : order.id]
                                       ? `✓ ${dispatchedOrders[isWooActive ? `WOO-${order.id}` : order.id].trackingCode}`
-                                      : 'توصيل / Dispatch'}
+                                      : 'توصيل'}
                                   </span>
                                 </button>
+
+                                {!isWooActive && (
+                                  <button
+                                    onClick={() => onDeleteOrder(order.id)}
+                                    className="p-1.5 bg-rose-950/40 hover:bg-rose-900/40 border border-rose-500/30 text-rose-400 hover:text-rose-300 rounded-sm transition-all cursor-pointer"
+                                    title="Delete Order / حذف الطلب"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -2960,37 +3353,229 @@ export default function AdminPanel({
 
               </div>
 
-              {/* ACTIONS: THERMAL PRINT & DOWNLOAD PDF */}
-              <div className="w-full max-w-[330px] flex flex-col sm:flex-row gap-2 mt-4">
+              {/* ACTIONS: THERMAL PRINT, DOWNLOAD PDF & SAVE TO ORDER */}
+              <div className="w-full max-w-[330px] flex flex-col gap-2 mt-4">
                 <button
                   type="button"
-                  onClick={handlePrintTiki}
-                  className="flex-1 px-4 py-3 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs sm:text-sm uppercase tracking-widest rounded-sm cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                  onClick={handleSyncTikiToOrder}
+                  className="w-full px-4 py-2.5 bg-amber-500 hover:bg-amber-400 text-black font-black text-xs uppercase tracking-wider rounded-sm cursor-pointer transition-all flex items-center justify-center gap-1.5 shadow-md"
                 >
-                  <Printer className="h-4 w-4 shrink-0 text-black" />
-                  <span>Print / طباعة</span>
+                  <Save className="h-4 w-4 shrink-0 text-black" />
+                  <span>حفظ التعديلات في الطلب / Save to Order</span>
                 </button>
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handlePrintTiki}
+                    className="flex-1 px-3 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase tracking-wider rounded-sm cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <Printer className="h-4 w-4 shrink-0 text-black" />
+                    <span>Print / طباعة</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDownloadTikiPDF}
+                    disabled={isDownloadingPdf}
+                    className="flex-1 px-3 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 disabled:opacity-75 text-white font-black text-xs uppercase tracking-wider rounded-sm cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                  >
+                    {isDownloadingPdf ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 shrink-0 text-white animate-spin" />
+                        <span>جاري التحميل...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Download className="h-4 w-4 shrink-0 text-white" />
+                        <span>PDF / تحميل</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ADD / EDIT ORDER MODAL */}
+      {isOrderModalOpen && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-[#16181e] border border-gray-800 rounded-xl w-full max-w-lg shadow-2xl overflow-hidden">
+            
+            {/* Modal Header */}
+            <div className="p-5 border-b border-gray-800 flex justify-between items-center bg-[#1a1d26]">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
+                  <Edit3 className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">
+                    {modalMode === 'create' ? 'إضافة طلب جديد / Create New Order' : 'تعديل تفاصيل الطلب / Edit Order Details'}
+                  </h3>
+                  <p className="text-[11px] text-gray-400">
+                    {isEditingWooOrder ? 'تعديل مباشر في موقع WooCommerce' : 'تغيير بيانات الزبون وسيحفظ فوراً في النظام'}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setIsOrderModalOpen(false)}
+                className="text-gray-400 hover:text-white p-1 rounded-md hover:bg-gray-800 cursor-pointer"
+              >
+                <XCircle className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Form Content */}
+            <form onSubmit={handleSaveOrderSubmit} className="p-5 space-y-4 text-xs">
+              
+              {orderSaveSuccess && (
+                <div className="p-3 bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 rounded-md font-bold text-center flex items-center justify-center gap-2 animate-bounce">
+                  <CheckCircle className="h-4 w-4 text-emerald-400" />
+                  <span>✓ تم حفظ التعديلات بنجاح! / Changes Saved Successfully!</span>
+                </div>
+              )}
+
+              {/* Customer Name & Phone */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-gray-400 font-bold mb-1">اسم الزبون / Customer Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={orderFormName}
+                    onChange={(e) => setOrderFormName(e.target.value)}
+                    placeholder="مثال: يونس العلوي"
+                    className="w-full bg-[#0D0E11] border border-gray-800 rounded-md py-2 px-3 text-white font-bold focus:outline-hidden focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-gray-400 font-bold mb-1">رقم الهاتف / Phone Number *</label>
+                  <input
+                    type="text"
+                    required
+                    value={orderFormPhone}
+                    onChange={(e) => setOrderFormPhone(e.target.value)}
+                    placeholder="06XXXXXXXX"
+                    className="w-full bg-[#0D0E11] border border-gray-800 rounded-md py-2 px-3 text-white font-mono font-bold focus:outline-hidden focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              {/* City & Status */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-gray-400 font-bold mb-1">المدينة / City *</label>
+                  <select
+                    value={orderFormCity}
+                    onChange={(e) => setOrderFormCity(e.target.value)}
+                    className="w-full bg-[#0D0E11] border border-gray-800 rounded-md py-2 px-3 text-white font-bold focus:outline-hidden focus:border-blue-500 cursor-pointer"
+                  >
+                    {CITIES.map((c: City) => (
+                      <option key={c.id} value={c.id}>
+                        {c.nameAr} ({c.nameEn})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-gray-400 font-bold mb-1">حالة الطلب / Order Status</label>
+                  <select
+                    value={orderFormStatus}
+                    onChange={(e) => setOrderFormStatus(e.target.value)}
+                    className="w-full bg-[#0D0E11] border border-gray-800 rounded-md py-2 px-3 text-white font-bold focus:outline-hidden focus:border-blue-500 cursor-pointer"
+                  >
+                    <option value="pending">☎ Pending Call / قيد الاتصال</option>
+                    <option value="confirmed">✓ Confirmed / مؤكد</option>
+                    <option value="shipped">🚚 Shipped / تم الشحن</option>
+                    <option value="delivered">🎉 Delivered / تم التسليم</option>
+                    <option value="cancelled">✖ Cancelled / ملغى</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-gray-400 font-bold mb-1">عنوان التسليم / Delivery Address</label>
+                <textarea
+                  rows={2}
+                  value={orderFormAddress}
+                  onChange={(e) => setOrderFormAddress(e.target.value)}
+                  placeholder="زنقة، الحي، الملحقة..."
+                  className="w-full bg-[#0D0E11] border border-gray-800 rounded-md py-2 px-3 text-white focus:outline-hidden focus:border-blue-500 resize-none"
+                />
+              </div>
+
+              {/* Product & Price */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <label className="block text-gray-400 font-bold mb-1">اسم المنتج / Product Name</label>
+                  <input
+                    type="text"
+                    value={orderFormProduct}
+                    onChange={(e) => setOrderFormProduct(e.target.value)}
+                    placeholder="مثال: ساعة ذكية رجالية"
+                    className="w-full bg-[#0D0E11] border border-gray-800 rounded-md py-2 px-3 text-white focus:outline-hidden focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-gray-400 font-bold mb-1">الثمن (DH) *</label>
+                  <input
+                    type="number"
+                    required
+                    value={orderFormPrice}
+                    onChange={(e) => setOrderFormPrice(parseFloat(e.target.value) || 0)}
+                    className="w-full bg-[#0D0E11] border border-gray-800 rounded-md py-2 px-3 text-white font-mono font-bold focus:outline-hidden focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-gray-400 font-bold mb-1">ملاحظات إضافية / Notes</label>
+                <input
+                  type="text"
+                  value={orderFormNotes}
+                  onChange={(e) => setOrderFormNotes(e.target.value)}
+                  placeholder="ملاحظات الموزع أو العميل..."
+                  className="w-full bg-[#0D0E11] border border-gray-800 rounded-md py-2 px-3 text-white focus:outline-hidden focus:border-blue-500"
+                />
+              </div>
+
+              {/* Footer Actions */}
+              <div className="flex gap-3 pt-3 border-t border-gray-800 justify-end">
                 <button
                   type="button"
-                  onClick={handleDownloadTikiPDF}
-                  disabled={isDownloadingPdf}
-                  className="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 disabled:opacity-75 text-white font-black text-xs sm:text-sm uppercase tracking-widest rounded-sm cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                  onClick={() => setIsOrderModalOpen(false)}
+                  className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 font-bold rounded-md cursor-pointer"
                 >
-                  {isDownloadingPdf ? (
+                  إلغاء / Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={isSavingOrder}
+                  className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white font-extrabold rounded-md cursor-pointer flex items-center gap-2 shadow-lg transition-all"
+                >
+                  {isSavingOrder ? (
                     <>
-                      <RefreshCw className="h-4 w-4 shrink-0 text-white animate-spin" />
-                      <span>جاري التحميل...</span>
+                      <RefreshCw className="h-4 w-4 animate-spin text-white" />
+                      <span>جاري الحفظ...</span>
                     </>
                   ) : (
                     <>
-                      <Download className="h-4 w-4 shrink-0 text-white" />
-                      <span>PDF / تحميل</span>
+                      <Save className="h-4 w-4 text-white" />
+                      <span>حفظ التعديلات / Save Changes</span>
                     </>
                   )}
                 </button>
               </div>
-            </div>
 
+            </form>
           </div>
         </div>
       )}

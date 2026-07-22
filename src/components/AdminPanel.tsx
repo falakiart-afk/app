@@ -325,6 +325,7 @@ export default function AdminPanel({
   const [tikiProduct, setTikiProduct] = useState('');
   const [tikiPrice, setTikiPrice] = useState('');
   const [tikiQrData, setTikiQrData] = useState('');
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
 
   const handleOpenTikiModal = (order: any, isWoo: boolean) => {
     let name = '';
@@ -638,24 +639,48 @@ export default function AdminPanel({
     iframeDoc.close();
   };
 
-  const handleDownloadTikiPDF = () => {
+  const handleDownloadTikiPDF = async () => {
     const element = document.getElementById('printable-tiki-preview');
-    if (!element) return;
+    if (!element) {
+      alert('عذراً، لم يتم العثور على معاينة التذكرة (Ticket preview element not found)');
+      return;
+    }
 
-    const opt = {
-      margin: 0,
-      filename: `Tiki_${tikiQrData || 'Label'}.pdf`,
-      image: { type: 'jpeg' as const, quality: 0.98 },
-      html2canvas: { 
-        scale: 3, 
-        useCORS: true,
-        letterRendering: true,
-        backgroundColor: '#ffffff'
-      },
-      jsPDF: { unit: 'mm', format: [100, 100] as [number, number], orientation: 'portrait' as const }
-    };
+    setIsDownloadingPdf(true);
 
-    html2pdf().from(element).set(opt).save();
+    try {
+      // Resolve html2pdf function safely across CJS and ESM default exports
+      const html2pdfFunc = (html2pdf as any)?.default || html2pdf;
+
+      if (typeof html2pdfFunc === 'function') {
+        const opt = {
+          margin: 0,
+          filename: `Tiki_${tikiQrData || 'Label'}.pdf`,
+          image: { type: 'jpeg' as const, quality: 0.98 },
+          html2canvas: { 
+            scale: 3, 
+            useCORS: true,
+            allowTaint: true,
+            letterRendering: true,
+            backgroundColor: '#ffffff',
+            logging: false,
+            imageTimeout: 8000
+          },
+          jsPDF: { unit: 'mm', format: [100, 100] as [number, number], orientation: 'portrait' as const }
+        };
+
+        await html2pdfFunc().from(element).set(opt).save();
+      } else {
+        throw new Error('html2pdf library is not loaded properly');
+      }
+    } catch (err) {
+      console.error('Error generating PDF:', err);
+      // Fallback: trigger print dialog which allows native Save as PDF
+      alert('سيتم فتح نافذة الطباعة لتنزيل التذكرة بصيغة PDF مباشرة (Save as PDF)');
+      handlePrintTiki();
+    } finally {
+      setIsDownloadingPdf(false);
+    }
   };
 
   const [wooSites, setWooSites] = useState<WooSite[]>([]);
@@ -2837,7 +2862,7 @@ export default function AdminPanel({
                 {/* Brand Logo Header */}
                 {tikiLogoType === 'image' && tikiLogoImage ? (
                   <div className="flex justify-center items-center h-[45px] w-full overflow-hidden">
-                    <img src={tikiLogoImage} alt="Logo Preview" className="max-h-[45px] max-w-full object-contain" />
+                    <img src={tikiLogoImage} alt="Logo Preview" crossOrigin="anonymous" className="max-h-[45px] max-w-full object-contain" />
                   </div>
                 ) : (
                   <h1 className="text-center font-black italic tracking-tighter text-3xl uppercase leading-none m-0">
@@ -2914,6 +2939,7 @@ export default function AdminPanel({
                       src={tikiQrType === 'custom_image' && tikiQrImage ? tikiQrImage : `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(tikiQrData)}`}
                       alt="Label QR"
                       referrerPolicy="no-referrer"
+                      crossOrigin="anonymous"
                       className="w-[85px] h-[85px] object-contain border border-gray-200 p-0.5 bg-white"
                     />
                   </div>
@@ -2947,10 +2973,20 @@ export default function AdminPanel({
                 <button
                   type="button"
                   onClick={handleDownloadTikiPDF}
-                  className="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-500 text-white font-black text-xs sm:text-sm uppercase tracking-widest rounded-sm cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                  disabled={isDownloadingPdf}
+                  className="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 disabled:opacity-75 text-white font-black text-xs sm:text-sm uppercase tracking-widest rounded-sm cursor-pointer transition-all flex items-center justify-center gap-1.5"
                 >
-                  <Download className="h-4 w-4 shrink-0 text-white" />
-                  <span>PDF / تحميل</span>
+                  {isDownloadingPdf ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 shrink-0 text-white animate-spin" />
+                      <span>جاري التحميل...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Download className="h-4 w-4 shrink-0 text-white" />
+                      <span>PDF / تحميل</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>
